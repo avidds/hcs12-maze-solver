@@ -21,27 +21,18 @@
 ; Peter Hiscocks
 ; Version 2
 
-; Modified from version 1 to support selection of the individual LED
-;  associated with a sensor, to reduce crosstalk from unselected sensor
-;  LEDs.
+
 ; The guider hardware was modified with the addition of a 74HC138 decoder that
 ;  drives the individual LEDs, so that only the LED associated with a given
 ;  sensor is ON when that sensor is being read.
-; This requires that the software be modified to enable the decoder with bit PA5
+;  This requires that the software be modified to enable the decoder with bit PA5
 ;  in PORTA.
 ; The CdS cells are very slow in responding to changes in light, so a 20
 ;  millisecond delay is inserted between selecting a particular sensor and
 ;  reading its value.
-; Substantial improvement:
-;       Draws less battery current for longer life
-;       Creates less heat in the 5V logic regulator
-;       Much greater contrast between dark and light readings
 
 ; Overview:
 ; ---------
-; This program is intended as a test routine for the guider sensors of the
-; eebot robot and contains routines that will be useful in the robot
-; guidance project.
 ; The guider consists of four absolute brightness sensors and one
 ;  differential brightness pair of sensors. They are arranged at the nose of
 ;  the robot in the following pattern (viewed from above):
@@ -75,7 +66,6 @@
 ; volts when over a light surface and 4 volts when covered by a finger. The
 ; range from light background to black tape background is typically 1.5 volts
 ; over a light background to 2.4 volts over black tape.
-; We have yet to quantify the readings from the differential sensor E-F.
 
 ; Using the program:
 ; ------------------
@@ -87,78 +77,6 @@
 ; LED illuminators when doing this.
 
 ; equates section
-
-; A/D Converter Equates (all these are done in the 9S12C32.inc file):
-; -------------------------------------------------------------------
-; ATDCTL2 EQU $0082 ; A/D Control Register 2
-;         7  6  5  4  3  2  1  0
-;       --- --- --- --- --- --- --- ---
-;      |   |   |   |   |   |   |   |   |
-;       --- --- --- --- --- --- --- ---
-;        ^   ^   ^   ^   ^   ^   ^   ^
-;        |
-;        +--------ADPU: 0 = A/D powered down
-;                       1 = A/D powered up
-
-; ATDCTL3 EQU $0083 ; A/D Control Register 3
-;         7  6  5  4  3  2  1  0
-;       --- --- --- --- --- --- --- ---
-;      |   |   |   |   |   |   |   |   |
-;       --- --- --- --- --- --- --- ---
-;        ^   ^   ^   ^   ^   ^   ^   ^
-;        |   |   |   |   |   |   |
-;        |   |   |   |   |   |
-;        +---+---+---+--- Conversion Sequence Limit: 0001 = 1 conversion
-;                                                    ...
-;                                                    0111 = 7 conversions
-;                                                    1xxx = 8 conversions
-
-; ATDCTL4 EQU $0084 ; A/D Control Register 4
-;         7  6  5  4  3  2  1  0
-;       --- --- --- --- --- --- --- ---
-;      |   |   |   |   |   |   |   |   |
-;       --- --- --- --- --- --- --- ---
-;        ^   ^   ^   ^   ^   ^   ^   ^
-;        |   |   |   |   |
-;        |   +---+---+---+--- ATD Clock Prescaler Bits: 00101 = :12
-;        |                                              01011 = :24
-;        |                                              10111 = :48
-;        |
-;        +--- SRES8: 0 = 10 bits
-;                    1 = 8 bits
-
-; ATDCTL5 EQU $0085 ; A/D Control Register 5
-;         7  6  5  4  3  2  1  0
-;       --- --- --- --- --- --- --- ---
-;      |   |   |   |   |   |   |   |   |
-;       --- --- --- --- --- --- --- ---
-;        ^   ^   ^   ^   ^   ^   ^   ^
-;        |   |   |   |   |   |
-;        |   |   |   |   |   +---+--- Channel Select
-;        |   |   |   |   |
-;        |   |   |   |   +--- MULT: 0 = Sample one channel
-;        |   |   |   |              1 = Sample several channels starting
-;        |   |   |   |                  with selected channel
-;        |   |   |   |
-;        |   |   |   +--- SCAN: 0 = Single conversion sequence per write to ADTCTL5
-;        |   |   |               1 = Continuous conversion sequences
-;        |   |   |
-;        |   |   +--- not used
-;        |   |
-;        |   +--- not used
-;        |
-;        +--- DJM: 0 = Left justified data in the result register
-;                   1 = Right justified data in the result register
-; ATDSTAT0 EQU $0086 ; A/D Status Register 0
-;         7  6  5  4  3  2  1  0
-;       --- --- --- --- --- --- --- ---
-;      |   |   |   |   |   |   |   |   |
-;       --- --- --- --- --- --- --- ---
-;        ^   ^   ^   ^   ^   ^   ^   ^
-;        |
-;        |
-;        +--------SCF: 0 = Conversion sequence not completed
-;                      1 = Conversion sequence has completed
 ;
 ; The A/D converter automatically puts the 4 results in these registers.
 ; ATDDR0L EQU $0091   ; A/D Result Register 0
@@ -213,6 +131,10 @@ NULL            EQU     00              ; The string 'null terminator'
 CR              EQU     $0D             ; 'Carriage Return' character
 SPACE           EQU     ' '             ; The 'space' character 
 
+*************************************************************************************
+* To be copied to main file                                                         *
+*************************************************************************************
+
 ;Line States                            Based on sensor readout
 STRAIGHT        EQU     $0A             ;On a straight line.Sensors A and C are activated.
 TJUNCTION       EQU     $07             ;Forwards T Junction. C, B, D sensors activated
@@ -223,6 +145,11 @@ TRIGHT          EQU     $0B             ;Right facing T Junction. A,C,D sensors 
 THRESHOLD_H     EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
 THRESHOLD_L     EQU     $5C               ;Off a line:  1.8V = 92 = $5C
 
+                                          ;Threshold in N, for E-F sensors w/ hysterysis of +- 0.3V
+TRAC_THRESH_H   EQU     $8F               ;2.8V= 143 = $8F
+TRAC_THRESH_L   EQU     $7A               ;2.2V = 122 = $7A
+*************************************************************************************
+
 
 ; variable/data section
 
@@ -230,19 +157,27 @@ THRESHOLD_L     EQU     $5C               ;Off a line:  1.8V = 92 = $5C
 ;-------------------------------
 ; Storage Registers (9S12C32 RAM space: $3800 ... $3FFF)
 
+*************************************************************************************
+*To be copied to main file                                                          *
+*************************************************************************************
 SENSOR_LINE     FCB     $01             ; Storage for guider sensor readings
 SENSOR_BOW      FCB     $23             ; Initialized to test values
 SENSOR_PORT     FCB     $45
 SENSOR_MID      FCB     $67
 SENSOR_STBD     FCB     $89
 
+LINE_STATUS     FCB     $00           ; Interpreted Sensor readout. 0 is off line. 1 is on line.
+                                        ; 000(E/F)ABCD
 
-SENSOR_STATE    FCB     1               ; Interpreted Sensor readout. 0 is off line. 1 is on line.
-                                        ; (E/F value)ABCD
-                                            
-LINE_TYPE       RMB     1               ; Storage for derived line type
+LINESENSOR_OUTPUT RMB   2               ;Main Output Variable
+                                        ;Appendation of LINE_STATUS & Output of E&F
+                                        ; XXXXXXXX + 000(E/F)ABCD
+                                        ; E/F Value
 
 SENSOR_NUM      RMB     1               ; The currently selected sensor
+TEMP            RMB     1               ; Temporary location
+***********************************************************************************
+
 TOP_LINE        RMB     20              ; Top line of display
                 FCB     NULL            ;  terminated by null
 
@@ -252,7 +187,7 @@ BOT_LINE        RMB     20              ; Bottom line of display
 CLEAR_LINE      FCC     '                  '
                 FCB     NULL            ;  terminated by null
 
-TEMP            RMB     1               ; Temporary location
+
 
 ; code section
 
@@ -268,6 +203,8 @@ _Startup:
 
                 JSR     INIT            ; Initialize ports
                 JSR     openADC         ; Initialize the ATD
+                
+                
                 JSR     openLCD         ; Initialize the LCD
                 JSR     CLR_LCD_BUF     ; Write 'space' characters to the LCD buffer
            
@@ -282,16 +219,28 @@ LINESENSE       JSR     G_LEDS_ON       ; Enable the guider LEDs
                 RTS
                 JSR     SWI
 
+
+
+
+
+
+
+
+
+
 ; subroutine section
+********************************************************************************
+*                         Line Sensor Subroutines                              *
+********************************************************************************
 
 ;-------------------------------------------------------------------------------
 ;               Initialize ports
 
-INIT            BCLR    DDRAD,$FF       ; Make PORTAD an input (DDRAD @ $0272)
+INIT            BT    DDRJ,$C0        ; Make pins 7,6 of PTJ outputs (DDRJ @ $026A)
+                RTSCLR    DDRAD,$FF       ; Make PORTAD an input (DDRAD @ $0272)
                 BSET    DDRA,$FF        ; Make PORTA an output (DDRA @ $0002)
                 BSET    DDRB,$FF        ; Make PORTB an output (DDRB @ $0003)
-                BSET    DDRJ,$C0        ; Make pins 7,6 of PTJ outputs (DDRJ @ $026A)
-                RTS
+                BSE
 
 ;-------------------------------------------------------------------------------
 ;               Initialize the ADC
@@ -303,45 +252,6 @@ openADC         MOVB    #$80,ATDCTL2    ; Turn on ADC (ATDCTL2 @ $0082)
                 MOVB    #$97,ATDCTL4    ; 8-bit resolution, prescaler=48 (ATDCTL4 @ $0084)
                 RTS
 
-;-------------------------------------------------------------------------------
-;               Clear LCD Buffer
-
-; This routine writes 'space' characters (ascii 20) into the LCD display
-;  buffer in order to prepare it for the building of a new display buffer.
-; This needs only to be done once at the start of the program. Thereafter the
-;  display routine should maintain the buffer properly.
-
-CLR_LCD_BUF     LDX     #CLEAR_LINE
-                LDY     #TOP_LINE
-                JSR     STRCPY
-
-CLB_SECOND      LDX     #CLEAR_LINE
-                LDY     #BOT_LINE
-                JSR     STRCPY
-
-CLB_EXIT        RTS
-;-------------------------------------------------------------------------------
-;               String Copy
-
-; Copies a null-terminated string (including the null) from one location to
-;  another
-
-; Passed: X contains starting address of null-terminated string
-;         Y contains first address of destination
-
-STRCPY          PSHX                    ; Protect the registers used
-                PSHY
-                PSHA
-STRCPY_LOOP     LDAA    0,X             ; Get a source character
-                STAA    0,Y             ; Copy it to the destination
-                BEQ     STRCPY_EXIT     ; If it was the null, then exit
-                INX                     ; Else increment the pointers
-                INY
-                BRA     STRCPY_LOOP     ; and do it again
-STRCPY_EXIT     PULA                    ; Restore the registers
-                PULY
-                PULX
-                RTS
 
 ;-------------------------------------------------------------------------------
 ;               Guider LEDs ON
@@ -368,6 +278,99 @@ G_LEDS_ON       BSET    PORTA,%00100000 ; Set bit 5
 
 G_LEDS_OFF      BCLR    PORTA,%00100000 ; Clear bit 5
                 RTS
+;-------------------------------------------------------------------------------
+;               Interpret Line Sensor Output. 
+; Checks each sensor readout against threshold HI & LOW to determine status.
+; Empties Accumulator A
+; FORMAT XXXXABCD. Sensor EF is passed through upper 4 bits.
+
+;BOW SENSOR (A)
+LINE_STATUS     LDAA    SENSOR_BOW                ;Load sensor value
+                CMPA    THRESHOLD_H                ;Compare to upper threshold
+                BGE     SENS_BOW_HI               ;If above threashold, set bit 'A'
+                
+                CMPA    THRESHOLD_L                ;Compare to lower threshold
+                BLE     SENS_BOW_LO               ;If below threshold, clear bit 'A'
+                
+                ;Else reading is noise and it stays the same.
+                BRA STATUS_PORT
+                 
+SENS_BOW_HI     BSET    LINE_STATUS, %00001000     ;Set bit 'A'
+                BRA     STATUS_PORT
+
+SENS_BOW_LO     BCLR    LINE_STATUS, %00001000     ;Clear bit 'A'
+                BRA     STATUS_PORT
+
+;PORT SENSOR (B)
+STATUS_PORT     LDAA    SENSOR_PORT                ;Load sensor value
+                CMPA    THRESHOLD_H                ;Compare to upper threshold
+                BGE     SENS_PORT_HI                ;If above threashold, set bit 'B'
+                
+                CMPA    THRESHOLD_L                ;Compare to lower threshold
+                BLE     SENS_PORT_LO               ;If below threshold, clear bit 'B'
+                
+                ;Else reading is noise and it stays the same.
+                BRA     STATUS_MID
+                 
+SENS_PORT_HI    BSET    LINE_STATUS, %00000100     ;Set bit 'B'
+                BRA     STATUS_MID
+
+SENS_PORT_LO    BCLR    LINE_STATUS, %00000100     ;Clear bit 'B'
+                BRA     STATUS_MID
+                
+;MIDDLE SENSOR(C)                
+STATUS_MID      LDAA    SENSOR_MID                ;Load sensor value
+                CMPA    THRESHOLD_H                ;Compare to upper threshold
+                BGE     SENS_MID_HI                ;If above threashold, set bit 'C'
+                
+                CMPA    THRESHOLD_L                ;Compare to lower threshold
+                BLE     SENS_MID_LO               ;If below threshold, clear bit 'C'
+                
+                ;Else reading is noise and it stays the same.
+                BRA     STATUS_STBD
+                 
+SENS_MID_HI     BSET    LINE_STATUS, %00000010     ;Set bit 'C'
+                BRA     STATUS_STBD
+
+SENS_MID_LO     BCLR    LINE_STATUS, %00000010     ;Clear bit 'C'
+                BRA     STATUS_STBD
+
+;STARBORD SENSOR (D)                
+STATUS_STBD     LDAA    SENSOR_STBD                ;Load sensor value
+                CMPA    THRESHOLD_H                ;Compare to upper threshold
+                BGE     SENS_STBD_HI                ;If above threashold, set bit 'D'
+                
+                CMPA    THRESHOLD_L                ;Compare to lower threshold
+                BLE     SENS_STBD_LO               ;If below threshold, clear bit 'D'
+                
+                ;Else reading is noise and it stays the same.
+                BRA     STATUS_EF
+                 
+SENS_STBD_HI     BSET    LINE_STATUS, %00000001     ;Set bit 'D'
+                 BRA     STATUS_EF
+
+SENS_STBD_LO     BCLR    LINE_STATUS, %00000001     ;Clear bit 'D'
+                 BRA     STATUS_EF                
+
+;LIne tracking sensor (EF)                
+STATUS_EF        LDAA    SENSOR_LINE                ;Load sensor value
+                 CMPA    TRAC_SENS_HI
+                 BGE     EF_HI
+                 
+                 CMPA    TRAC_SENS_LO
+                 BGE     EF_LO
+
+                 BRA     PASSTHROUGH
+                    
+EF_HI            BSET    LINESTATUS, %00010000      ;Set bit E/F: We are left of line
+                 BGE     PASSTHROUGH
+EF_LO            BSET    LINESTATUS, %00010000      ;Clear bit E/F: We are right of line 
+                 BGE     PASSTHROUGH
+                 
+PASSTHROUGH      LDAA    SENSOR_LINE                ;Load the EF sensor value into upper bits
+                 LDAB    LINE_STATUS                ;Load the parsed sensor values into lower bits
+                 STD     LINESENSOR_OUTPUT          ;store in output 
+                 RTS                                 
 
 ;-------------------------------------------------------------------------------
 ;               Read Sensors
@@ -476,6 +479,71 @@ SELECT_SENSOR   PSHA                    ; Save the sensor number for the moment
                 ORAA    TEMP            ; OR it into the sensor bit positions
                 STAA    PORTA           ; Update the hardware
                 RTS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+********************************************************************************
+*                              LCD Subroutines                                 *
+********************************************************************************
+
+;-------------------------------------------------------------------------------
+;               Clear LCD Buffer
+
+; This routine writes 'space' characters (ascii 20) into the LCD display
+;  buffer in order to prepare it for the building of a new display buffer.
+; This needs only to be done once at the start of the program. Thereafter the
+;  display routine should maintain the buffer properly.
+
+CLR_LCD_BUF     LDX     #CLEAR_LINE
+                LDY     #TOP_LINE
+                JSR     STRCPY
+
+CLB_SECOND      LDX     #CLEAR_LINE
+                LDY     #BOT_LINE
+                JSR     STRCPY
+
+CLB_EXIT        RTS
+;-------------------------------------------------------------------------------
+;               String Copy
+
+; Copies a null-terminated string (including the null) from one location to
+;  another
+
+; Passed: X contains starting address of null-terminated string
+;         Y contains first address of destination
+
+STRCPY          PSHX                    ; Protect the registers used
+                PSHY
+                PSHA
+STRCPY_LOOP     LDAA    0,X             ; Get a source character
+                STAA    0,Y             ; Copy it to the destination
+                BEQ     STRCPY_EXIT     ; If it was the null, then exit
+                INX                     ; Else increment the pointers
+                INY
+                BRA     STRCPY_LOOP     ; and do it again
+STRCPY_EXIT     PULA                    ; Restore the registers
+                PULY
+                PULX
+                RTS
+
+
 ;-------------------------------------------------------------------------------
 ;               Display Sensor Readings
 
