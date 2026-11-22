@@ -216,8 +216,8 @@ LINESENSE       JSR     G_LEDS_ON       ; Enable the guider LEDs
                 JSR     READ_SENSORS    ; Read the 5 guider sensors
                 JSR     G_LEDS_OFF      ; Disable the guider LEDs
                 JSR     LINE_STATUS     ; Interpet the sensors into one of 6 states
-                RTS
-                JSR     SWI
+               ;; RTS
+                SWI
 
 
 
@@ -236,11 +236,11 @@ LINESENSE       JSR     G_LEDS_ON       ; Enable the guider LEDs
 ;-------------------------------------------------------------------------------
 ;               Initialize ports
 
-INIT            BT    DDRJ,$C0        ; Make pins 7,6 of PTJ outputs (DDRJ @ $026A)
-                RTSCLR    DDRAD,$FF       ; Make PORTAD an input (DDRAD @ $0272)
-                BSET    DDRA,$FF        ; Make PORTA an output (DDRA @ $0002)
-                BSET    DDRB,$FF        ; Make PORTB an output (DDRB @ $0003)
-                BSE
+INIT            BCLR    DDRAD, $FF      ;Make PORTAD an input (DDRAD @ $0272)
+                BSET    DDRA,  $FF      ;Make portA an output
+                BSET    DDRB,  $FF      ;Make portB an output
+                BSET    DDRJ,  $C0      ;Make pins 7,6 OF PTJ outputs
+                RTS
 
 ;-------------------------------------------------------------------------------
 ;               Initialize the ADC
@@ -285,7 +285,7 @@ G_LEDS_OFF      BCLR    PORTA,%00100000 ; Clear bit 5
 ; FORMAT XXXXABCD. Sensor EF is passed through upper 4 bits.
 
 ;BOW SENSOR (A)
-LINE_STATUS     LDAA    SENSOR_BOW                ;Load sensor value
+GET_LINE_STATUS LDAA    SENSOR_BOW                ;Load sensor value
                 CMPA    THRESHOLD_H                ;Compare to upper threshold
                 BGE     SENS_BOW_HI               ;If above threashold, set bit 'A'
                 
@@ -354,17 +354,17 @@ SENS_STBD_LO     BCLR    LINE_STATUS, %00000001     ;Clear bit 'D'
 
 ;LIne tracking sensor (EF)                
 STATUS_EF        LDAA    SENSOR_LINE                ;Load sensor value
-                 CMPA    TRAC_SENS_HI
+                 CMPA    TRAC_THRESH_H
                  BGE     EF_HI
                  
-                 CMPA    TRAC_SENS_LO
+                 CMPA    TRAC_THRESH_L
                  BGE     EF_LO
 
                  BRA     PASSTHROUGH
                     
-EF_HI            BSET    LINESTATUS, %00010000      ;Set bit E/F: We are left of line
+EF_HI            BSET    LINE_STATUS, %00010000      ;Set bit E/F: We are left of line
                  BGE     PASSTHROUGH
-EF_LO            BSET    LINESTATUS, %00010000      ;Clear bit E/F: We are right of line 
+EF_LO            BSET    LINE_STATUS, %00010000      ;Clear bit E/F: We are right of line 
                  BGE     PASSTHROUGH
                  
 PASSTHROUGH      LDAA    SENSOR_LINE                ;Load the EF sensor value into upper bits
