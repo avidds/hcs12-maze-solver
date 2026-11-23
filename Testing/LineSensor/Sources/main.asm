@@ -147,7 +147,7 @@ THRESHOLD_L     EQU     $5C               ;Off a line:  1.8V = 92 = $5C
 
                                           ;Threshold in N, for E-F sensors w/ hysterysis of +- 0.3V
 TRAC_THRESH_H   EQU     $8F               ;2.8V= 143 = $8F
-TRAC_THRESH_L   EQU     $7A               ;2.2V = 122 = $7A
+TRAC_THRESH_L   EQU     $70               ;2.2V = 112 = $70
 *************************************************************************************
 
 
@@ -166,7 +166,7 @@ SENSOR_PORT     FCB     $45
 SENSOR_MID      FCB     $67
 SENSOR_STBD     FCB     $89
 
-LINE_STATUS     FCB     $00           ; Interpreted Sensor readout. 0 is off line. 1 is on line.
+LINE_STATUS     FCB     $11           ; Interpreted Sensor readout. 0 is off line. 1 is on line.
                                         ; 000(E/F)ABCD
 
 LINESENSOR_OUTPUT RMB   2               ;Main Output Variable
@@ -200,14 +200,17 @@ _Startup:
 
                 LDS     #$4000          ; Initialize the stack pointer
                 CLI                     ; Enable interrupts
-
+*************************************************************************************
+*To be copied to main file                                                          *
+*************************************************************************************
                 JSR     INIT            ; Initialize ports
                 JSR     openADC         ; Initialize the ATD
                 
                 
                 JSR     openLCD         ; Initialize the LCD
                 JSR     CLR_LCD_BUF     ; Write 'space' characters to the LCD buffer
-           
+                BCLR    LINE_STATUS, $FF ; Clear line status to known state.
+                
 
 ;-------------------------------------------------------------------------------
 ;               Display Sensors
@@ -215,7 +218,7 @@ _Startup:
 LINESENSE       JSR     G_LEDS_ON       ; Enable the guider LEDs
                 JSR     READ_SENSORS    ; Read the 5 guider sensors
                 JSR     G_LEDS_OFF      ; Disable the guider LEDs
-                JSR     LINE_STATUS     ; Interpet the sensors into one of 6 states
+                JSR     GET_LINE_STATUS     ; Interpet the sensors into one of 6 states
                ;; RTS
                 SWI
 
@@ -281,16 +284,16 @@ G_LEDS_OFF      BCLR    PORTA,%00100000 ; Clear bit 5
 ;-------------------------------------------------------------------------------
 ;               Interpret Line Sensor Output. 
 ; Checks each sensor readout against threshold HI & LOW to determine status.
-; Empties Accumulator A
-; FORMAT XXXXABCD. Sensor EF is passed through upper 4 bits.
+; Clobbers Accumulator A & B
+; FORMAT XXXXXXXX000(E/F)ABCD. Sensor EF is passed through upper 4 bits.
 
 ;BOW SENSOR (A)
 GET_LINE_STATUS LDAA    SENSOR_BOW                ;Load sensor value
-                CMPA    THRESHOLD_H                ;Compare to upper threshold
-                BGE     SENS_BOW_HI               ;If above threashold, set bit 'A'
+                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                BHS     SENS_BOW_HI               ;If above threashold, set bit 'A'
                 
-                CMPA    THRESHOLD_L                ;Compare to lower threshold
-                BLE     SENS_BOW_LO               ;If below threshold, clear bit 'A'
+                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                BLS     SENS_BOW_LO               ;If below threshold, clear bit 'A'
                 
                 ;Else reading is noise and it stays the same.
                 BRA STATUS_PORT
@@ -303,11 +306,11 @@ SENS_BOW_LO     BCLR    LINE_STATUS, %00001000     ;Clear bit 'A'
 
 ;PORT SENSOR (B)
 STATUS_PORT     LDAA    SENSOR_PORT                ;Load sensor value
-                CMPA    THRESHOLD_H                ;Compare to upper threshold
-                BGE     SENS_PORT_HI                ;If above threashold, set bit 'B'
+                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                BHS     SENS_PORT_HI                ;If above threashold, set bit 'B'
                 
-                CMPA    THRESHOLD_L                ;Compare to lower threshold
-                BLE     SENS_PORT_LO               ;If below threshold, clear bit 'B'
+                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                BLS     SENS_PORT_LO               ;If below threshold, clear bit 'B'
                 
                 ;Else reading is noise and it stays the same.
                 BRA     STATUS_MID
@@ -320,11 +323,11 @@ SENS_PORT_LO    BCLR    LINE_STATUS, %00000100     ;Clear bit 'B'
                 
 ;MIDDLE SENSOR(C)                
 STATUS_MID      LDAA    SENSOR_MID                ;Load sensor value
-                CMPA    THRESHOLD_H                ;Compare to upper threshold
-                BGE     SENS_MID_HI                ;If above threashold, set bit 'C'
+                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                BHS     SENS_MID_HI                ;If above threashold, set bit 'C'
                 
-                CMPA    THRESHOLD_L                ;Compare to lower threshold
-                BLE     SENS_MID_LO               ;If below threshold, clear bit 'C'
+                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                BLS     SENS_MID_LO               ;If below threshold, clear bit 'C'
                 
                 ;Else reading is noise and it stays the same.
                 BRA     STATUS_STBD
@@ -337,11 +340,11 @@ SENS_MID_LO     BCLR    LINE_STATUS, %00000010     ;Clear bit 'C'
 
 ;STARBORD SENSOR (D)                
 STATUS_STBD     LDAA    SENSOR_STBD                ;Load sensor value
-                CMPA    THRESHOLD_H                ;Compare to upper threshold
-                BGE     SENS_STBD_HI                ;If above threashold, set bit 'D'
+                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                BHS     SENS_STBD_HI                ;If above threashold, set bit 'D'
                 
-                CMPA    THRESHOLD_L                ;Compare to lower threshold
-                BLE     SENS_STBD_LO               ;If below threshold, clear bit 'D'
+                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                BLS     SENS_STBD_LO               ;If below threshold, clear bit 'D'
                 
                 ;Else reading is noise and it stays the same.
                 BRA     STATUS_EF
@@ -354,18 +357,18 @@ SENS_STBD_LO     BCLR    LINE_STATUS, %00000001     ;Clear bit 'D'
 
 ;LIne tracking sensor (EF)                
 STATUS_EF        LDAA    SENSOR_LINE                ;Load sensor value
-                 CMPA    TRAC_THRESH_H
-                 BGE     EF_HI
+                 CMPA    #TRAC_THRESH_H
+                 BHS     EF_HI
                  
-                 CMPA    TRAC_THRESH_L
-                 BGE     EF_LO
+                 CMPA    #TRAC_THRESH_L
+                 BLS     EF_LO
 
                  BRA     PASSTHROUGH
                     
 EF_HI            BSET    LINE_STATUS, %00010000      ;Set bit E/F: We are left of line
-                 BGE     PASSTHROUGH
-EF_LO            BSET    LINE_STATUS, %00010000      ;Clear bit E/F: We are right of line 
-                 BGE     PASSTHROUGH
+                 BRA     PASSTHROUGH
+EF_LO            BCLR    LINE_STATUS, %00010000      ;Clear bit E/F: We are right of line 
+                 BRA     PASSTHROUGH
                  
 PASSTHROUGH      LDAA    SENSOR_LINE                ;Load the EF sensor value into upper bits
                  LDAB    LINE_STATUS                ;Load the parsed sensor values into lower bits
@@ -482,7 +485,7 @@ SELECT_SENSOR   PSHA                    ; Save the sensor number for the moment
 
 
 
-
+*************************************************************************************
 
 
 
