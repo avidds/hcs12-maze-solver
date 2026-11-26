@@ -142,12 +142,22 @@ TLEFT           EQU     $0E             ;Left facing T junction, A,C,B sensors a
 TRIGHT          EQU     $0B             ;Right facing T Junction. A,C,D sensors activated
 
 ;Sensor level threhsold
-THRESHOLD_H     EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
-THRESHOLD_L     EQU     $5C               ;Off a line:  1.8V = 92 = $5C
+BOW_THRESHOLD_H      EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
+BOW_THRESHOLD_L      EQU     $5C               ;Off a line:  1.8V = 92 = $5C
 
-                                          ;Threshold in N, for E-F sensors w/ hysterysis of +- 0.3V
-TRAC_THRESH_H   EQU     $8F               ;2.8V= 143 = $8F
-TRAC_THRESH_L   EQU     $70               ;2.2V = 112 = $70
+PORT_THRESHOLD_H     EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
+PORT_THRESHOLD_L     EQU     $5C
+
+MID_THRESHOLD_H      EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
+MID_THRESHOLD_L      EQU     $5C
+
+STBD_THRESHOLD_H     EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
+STBD_THRESHOLD_L     EQU     $5C
+
+LINE_MID_VALUE       EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
+LINE_DELTA           EQU     $5C
+
+
 *************************************************************************************
 
 
@@ -207,8 +217,6 @@ _Startup:
                 JSR     openADC         ; Initialize the ATD
                 
                 
-                JSR     openLCD         ; Initialize the LCD
-                JSR     CLR_LCD_BUF     ; Write 'space' characters to the LCD buffer
                 BCLR    LINE_STATUS, $FF ; Clear line status to known state.
                 
 
@@ -289,10 +297,10 @@ G_LEDS_OFF      BCLR    PORTA,%00100000 ; Clear bit 5
 
 ;BOW SENSOR (A)
 GET_LINE_STATUS LDAA    SENSOR_BOW                ;Load sensor value
-                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                CMPA    #BOW_THRESHOLD_H                ;Compare to upper threshold
                 BHS     SENS_BOW_HI               ;If above threashold, set bit 'A'
                 
-                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                CMPA    #BOW_THRESHOLD_L                ;Compare to lower threshold
                 BLS     SENS_BOW_LO               ;If below threshold, clear bit 'A'
                 
                 ;Else reading is noise and it stays the same.
@@ -306,10 +314,10 @@ SENS_BOW_LO     BCLR    LINE_STATUS, %00001000     ;Clear bit 'A'
 
 ;PORT SENSOR (B)
 STATUS_PORT     LDAA    SENSOR_PORT                ;Load sensor value
-                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                CMPA    #PORT_THRESHOLD_H                ;Compare to upper threshold
                 BHS     SENS_PORT_HI                ;If above threashold, set bit 'B'
                 
-                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                CMPA    #PORT_THRESHOLD_L                ;Compare to lower threshold
                 BLS     SENS_PORT_LO               ;If below threshold, clear bit 'B'
                 
                 ;Else reading is noise and it stays the same.
@@ -323,10 +331,10 @@ SENS_PORT_LO    BCLR    LINE_STATUS, %00000100     ;Clear bit 'B'
                 
 ;MIDDLE SENSOR(C)                
 STATUS_MID      LDAA    SENSOR_MID                ;Load sensor value
-                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                CMPA    #MID_THRESHOLD_H                ;Compare to upper threshold
                 BHS     SENS_MID_HI                ;If above threashold, set bit 'C'
                 
-                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                CMPA    #MID_THRESHOLD_L                ;Compare to lower threshold
                 BLS     SENS_MID_LO               ;If below threshold, clear bit 'C'
                 
                 ;Else reading is noise and it stays the same.
@@ -340,10 +348,10 @@ SENS_MID_LO     BCLR    LINE_STATUS, %00000010     ;Clear bit 'C'
 
 ;STARBORD SENSOR (D)                
 STATUS_STBD     LDAA    SENSOR_STBD                ;Load sensor value
-                CMPA    #THRESHOLD_H                ;Compare to upper threshold
+                CMPA    #STBD_THRESHOLD_H                ;Compare to upper threshold
                 BHS     SENS_STBD_HI                ;If above threashold, set bit 'D'
                 
-                CMPA    #THRESHOLD_L                ;Compare to lower threshold
+                CMPA    #STBD_THRESHOLD_L                ;Compare to lower threshold
                 BLS     SENS_STBD_LO               ;If below threshold, clear bit 'D'
                 
                 ;Else reading is noise and it stays the same.
@@ -356,25 +364,28 @@ SENS_STBD_LO     BCLR    LINE_STATUS, %00000001     ;Clear bit 'D'
                  BRA     STATUS_EF                
 
 ;LIne tracking sensor (EF)                
-STATUS_EF        LDAA    SENSOR_LINE                ;Load sensor value
-                 CMPA    #TRAC_THRESH_H
-                 BHS     EF_HI
-                 
-                 CMPA    #TRAC_THRESH_L
-                 BLS     EF_LO
+STATUS_EF        LDAA    SENSOR_LINE                ; A = current E/F reading
+                 LDAB    LINE_MID_VALUE
+                 ADDB    LINE_DELTA                 ; B = upper threshold (mid + delta)
+                 CBA                                ; Computes A - B (reading - upper), B unchanged
+                 BHS     EF_HI                      ; reading >= upper: set bit
 
-                 BRA     PASSTHROUGH
-                    
-EF_HI            BSET    LINE_STATUS, %00010000      ;Set bit E/F: We are left of line
-                 BRA     PASSTHROUGH
-EF_LO            BCLR    LINE_STATUS, %00010000      ;Clear bit E/F: We are right of line 
-                 BRA     PASSTHROUGH
+                 LDAB    LINE_MID_VALUE
+                 SUBB    LINE_DELTA                 ; B = lower threshold (mid - delta)
+                 CBA                                ; Computes A - B (reading - lower)
+                 BLS     EF_LO                      ; reading <= lower: clear bit
                  
-PASSTHROUGH      LDAA    SENSOR_LINE                ;Load the EF sensor value into upper bits
-                 LDAB    LINE_STATUS                ;Load the parsed sensor values into lower bits
-                 STD     LINESENSOR_OUTPUT          ;store in output 
-                 RTS                                 
+                 BRA     PASSTHROUGH                ; Inside the band: keep previous state
 
+EF_HI            BSET    LINE_STATUS, %00010000     ; Set bit E/F: we are left of line
+                 BRA     PASSTHROUGH
+EF_LO            BCLR    LINE_STATUS, %00010000     ; Clear bit E/F : we are right of line
+                 BRA     PASSTHROUGH
+
+PASSTHROUGH      LDAA    SENSOR_LINE
+                 LDAB    LINE_STATUS
+                 STD     LINESENSOR_OUTPUT
+                 RTS
 ;-------------------------------------------------------------------------------
 ;               Read Sensors
 
@@ -506,233 +517,7 @@ SELECT_SENSOR   PSHA                    ; Save the sensor number for the moment
 *                              LCD Subroutines                                 *
 ********************************************************************************
 
-;-------------------------------------------------------------------------------
-;               Clear LCD Buffer
 
-; This routine writes 'space' characters (ascii 20) into the LCD display
-;  buffer in order to prepare it for the building of a new display buffer.
-; This needs only to be done once at the start of the program. Thereafter the
-;  display routine should maintain the buffer properly.
-
-CLR_LCD_BUF     LDX     #CLEAR_LINE
-                LDY     #TOP_LINE
-                JSR     STRCPY
-
-CLB_SECOND      LDX     #CLEAR_LINE
-                LDY     #BOT_LINE
-                JSR     STRCPY
-
-CLB_EXIT        RTS
-;-------------------------------------------------------------------------------
-;               String Copy
-
-; Copies a null-terminated string (including the null) from one location to
-;  another
-
-; Passed: X contains starting address of null-terminated string
-;         Y contains first address of destination
-
-STRCPY          PSHX                    ; Protect the registers used
-                PSHY
-                PSHA
-STRCPY_LOOP     LDAA    0,X             ; Get a source character
-                STAA    0,Y             ; Copy it to the destination
-                BEQ     STRCPY_EXIT     ; If it was the null, then exit
-                INX                     ; Else increment the pointers
-                INY
-                BRA     STRCPY_LOOP     ; and do it again
-STRCPY_EXIT     PULA                    ; Restore the registers
-                PULY
-                PULX
-                RTS
-
-
-;-------------------------------------------------------------------------------
-;               Display Sensor Readings
-
-; Passed: Sensor values in RAM locations SENSOR_LINE through SENSOR_STBD.
-; Returns: Nothing
-; Side: Everything
-
-; This routine writes the sensor values to the LCD. It uses the 'shadow buffer' approach.
-;  The display buffer is built by the display controller routine and then copied in its
-;  entirety to the actual LCD display. Although simpler approaches will work in this
-;  application, we take that approach to make the code more re-useable.
-; It's important that the display controller not write over other information on the
-;  LCD, so writing the LCD has to be centralized with a controller routine like this one.
-; In a more complex program with additional things to display on the LCD, this routine
-;  would be extended to read other variables and place them on the LCD. It might even
-;  read some 'display select' variable to determine what should be on the LCD.
-
-; For the purposes of this routine, we'll put the sensor values on the LCD
-;  in such a way that they (sort of) mimic the position of the sensors, so
-;  the display looks like this:
-;   01234567890123456789
-;   ___FF______________
-;   PP_MM_SS_LL________
-
-; Where FF is the front sensor, PP is port, MM is mid, SS is starboard and
-;  LL is the line sensor.
-
-; The corresponding addresses in the LCD buffer are defined in the following
-;  equates (In all cases, the display position is the MSDigit).
-
-DP_FRONT_SENSOR EQU     TOP_LINE+3
-DP_PORT_SENSOR  EQU     BOT_LINE+0
-DP_MID_SENSOR   EQU     BOT_LINE+3
-DP_STBD_SENSOR  EQU     BOT_LINE+6
-DP_LINE_SENSOR  EQU     BOT_LINE+9
-
-DISPLAY_SENSORS LDAA    SENSOR_BOW      ; Get the FRONT sensor value
-                JSR     BIN2ASC         ; Convert to ascii string in D
-                LDX     #DP_FRONT_SENSOR ; Point to the LCD buffer position
-                STD     0,X             ;  and write the 2 ascii digits there
-
-                LDAA    SENSOR_PORT     ; Repeat for the PORT value
-                JSR     BIN2ASC
-                LDX     #DP_PORT_SENSOR
-                STD     0,X
-
-                LDAA    SENSOR_MID      ; Repeat for the MID value
-                JSR     BIN2ASC
-                LDX     #DP_MID_SENSOR
-                STD     0,X
-
-                LDAA    SENSOR_STBD     ; Repeat for the STARBOARD value
-                JSR     BIN2ASC
-                LDX     #DP_STBD_SENSOR
-                STD     0,X
-
-                LDAA    SENSOR_LINE     ; Repeat for the LINE value
-                JSR     BIN2ASC
-                LDX     #DP_LINE_SENSOR
-                STD     0,X
-
-                LDAA    #CLEAR_HOME     ; Clear the display and home the cursor
-                JSR     cmd2LCD         ;
-
-                LDY     #40             ; Wait 2 ms until "clear display" command is complete
-                JSR     del_50us
-
-                LDX     #TOP_LINE       ; Now copy the buffer top line to the LCD
-                JSR     putsLCD
-
-                LDAA    #LCD_SEC_LINE   ; Position the LCD cursor on the second line
-                JSR     LCD_POS_CRSR
-
-                LDX     #BOT_LINE       ; Copy the buffer bottom line to the LCD
-                JSR     putsLCD
-                RTS
-;-------------------------------------------------------------------------------
-;               Binary to ASCII
-
-; Converts an 8 bit binary value in ACCA to the equivalent ASCII character 2
-;  character string in accumulator D
-; Uses a table-driven method rather than various tricks.
-
-; Passed: Binary value in ACCA
-; Returns: ASCII Character string in D
-; Side Fx: ACCB is destroyed
-
-HEX_TABLE       FCC     '0123456789ABCDEF' ; Table for converting values
-
-BIN2ASC         PSHA                    ; Save a copy of the input number on the stack
-                TAB                     ;  and copy it into ACCB
-                ANDB    #%00001111      ; Strip off the upper nibble of ACCB
-                CLRA                    ; D now contains 000n where n is the LSnibble
-                ADDD    #HEX_TABLE      ; Set up for indexed load
-                XGDX
-                LDAA    0,X             ; Get the LSnibble character
-
-                PULB                    ; Retrieve the input number into ACCB
-                PSHA                    ;  and push the LSnibble character in its place
-                RORB                    ; Move the upper nibble of the input number
-                RORB                    ;  into the lower nibble position.
-                RORB
-                RORB
-                ANDB    #%00001111      ; Strip off the upper nibble
-                CLRA                    ; D now contains 000n where n is the MSnibble
-                ADDD    #HEX_TABLE      ; Set up for indexed load
-                XGDX
-                LDAA    0,X             ; Get the MSnibble character into ACCA
-                PULB                    ; Retrieve the LSnibble character into ACCB
-                RTS
-
-;-------------------------------------------------------------------------------
-;     Routines to control the Liquid Crystal Display
-
-;-------------------------------------------------------------------------------
-;               Initialize the LCD
-
-openLCD         LDY     #2000           ; Wait 100 ms for LCD to be ready
-                JSR     del_50us        ;   "
-                LDAA    #INTERFACE      ; Set 8-bit data, 2-line display, 5x8 font
-                JSR     cmd2LCD         ;   "
-                LDAA    #CURSOR_OFF     ; Display on, cursor off, blinking off
-                JSR     cmd2LCD         ;   "
-                LDAA    #SHIFT_OFF      ; Move cursor right (address increments, no char. shift)
-                JSR     cmd2LCD         ;   "
-                LDAA    #CLEAR_HOME     ; Clear the display and home the cursor
-                JSR     cmd2LCD         ;   "
-                LDY     #40             ; Wait 2 ms until "clear display" command is complete
-                JSR     del_50us        ;   "
-                RTS
-
-;-------------------------------------------------------------------------------
-;               Send a command in accumulator A to the LCD
-
-cmd2LCD         BCLR    LCD_CNTR,LCD_RS ; Select the LCD Instruction register
-                JSR     dataMov         ; Send data to IR or DR of the LCD
-                RTS
-
-;-------------------------------------------------------------------------------
-;               Send a character in accumulator A to LCD
-
-putcLCD         BSET    LCD_CNTR,LCD_RS ; Select the LCD Data register
-                JSR     dataMov         ; Send data to IR or DR of the LCD
-                RTS
-
-;-------------------------------------------------------------------------------
-;               Send a NULL-terminated string pointed to by X
-
-putsLCD         LDAA    1,X+            ; Get one character from the string
-                BEQ     donePS          ; Reach NULL character?
-                JSR     putcLCD
-                BRA     putsLCD
-donePS          RTS
-;-------------------------------------------------------------------------------
-; General purpose function to send 8bit sequences to LCD           
-; Bits are sent from ACCA                                          
-;                                                                  
-; Nukes ACCA of its contents.                                      
-
-dataMov                BSET LCD_CNTR, LCD_E               ; Set enable high
-                       STAA LCD_DAT                       ; Send upper 8 bits of A to LCD
-                       BCLR LCD_CNTR, LCD_E              ; Set enable low to complete write
-                                                    
-                       LDY #1                             ; 50us delay for LCD to process data
-                       JSR del_50us
-                       RTS 
-;-------------------------------------------------------------------------------
-;               Position the Cursor
-
-; This routine positions the display cursor in preparation for the writing
-;  of a character or string.
-; For a 20x2 display:
-; The first line of the display runs from 0 .. 19.
-; The second line runs from 64 .. 83.
-
-; The control instruction to position the cursor has the format
-;               1aaaaaaa
-; where aaaaaaa is a 7 bit address.
-
-; Passed:   7 bit cursor Address in ACCA
-; Returns:  Nothing
-; Side Effects: None
-
-LCD_POS_CRSR    ORAA    #%10000000      ; Set the high bit of the control word
-                JSR     cmd2LCD         ;  and set the cursor address
-                RTS
 
 ;-------------------------------------------------------------------------------
 ; Generate delays with increments of 50us. Y * 50us of delay       
