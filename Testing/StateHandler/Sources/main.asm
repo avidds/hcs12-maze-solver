@@ -18,27 +18,28 @@
 OneSec      EQU     23              ; 1 second delay (at 23Hz)
 TwoSec      EQU     46              ; 2 second delay (at 23Hz)
 
-LCD_DAT     EQU     PORTB           ; LCD data port, bits - PB7,...,PB0
-LCD_CNTR    EQU     PTJ             ; LCD control port, bits - PJ7(E),PJ6(RS)
-LCD_E       EQU     $80             ; LCD E-signal pin
-LCD_RS      EQU     $40             ; LCD RS-signal pin
-FWD_INT     EQU     69              ; 3 second delay (at 23Hz)
-REV_INT     EQU     69              ; 3 second delay (at 23Hz)
-FWD_TRN_INT EQU     46              ; 2 second delay (at 23Hz)
-REV_TRN_INT EQU     46              ; 2 second delay (at 23Hz)
-
 ;State definitions
-START       EQU     0
-STOP        EQU     1
-FLINE       EQU     2
-DETECT_T    EQU     3
+START         EQU     0
+FWD           EQU     1
+ALL_STP       EQU     2
+LEFT_TRN      EQU     3
+RIGHT_TRN     EQU     4
+TRN_180       EQU     5
+DETECT_T      EQU     6
+LOST          EQU     7
 
+RIGHT_TRN_INT EQU     23
+LEFT_TRN_INT  EQU     23 
+TRN_180_INT   EQU     46  
 ;Line States                            Based on sensor readout
 STRAIGHT        EQU     $0A             ;On a straight line.Sensors A and C are activated.
 TJUNCTION       EQU     $07             ;Forwards T Junction. C, B, D sensors activated
 TLEFT           EQU     $0E             ;Left facing T junction, A,C,B sensors activated
 TRIGHT          EQU     $0B             ;Right facing T Junction. A,C,D sensors activated
-
+SENSA           EQU     $08             ;Sensor A mask
+SENSB           EQU     $04             ;Sensor B mask
+SENSC           EQU     $02             ;Sensor C mask
+SENSD           EQU     $01             ;Sensor D mask
 
 
 ;variable/data section
@@ -46,7 +47,9 @@ TRIGHT          EQU     $0B             ;Right facing T Junction. A,C,D sensors 
 TOF_COUNTER dc.b    0               ; The timer, incremented at 23Hz
 CRNT_STATE  dc.b    3               ; Current state register
 PREV_STATE  dc.b    3               ; Previous state register
-
+T_RIGHT_TRN ds.b    1               ; RIGHT_TRN Time
+T_LEFT_TRN  ds.b    1               ; LEFT_TRN Time
+T_TRN_180   ds.b    1               ; 180 turning time
 TEN_THOUS   ds.b    1               ; 10,000 digit
 THOUSANDS   ds.b    1               ; 1,000 digit
 HUNDREDS    ds.b    1               ; 100 digit
@@ -67,41 +70,27 @@ _Startup:
             BSET    DDRA, %00000011 ;Motor direction controls enable
             BSET    DDRT, %00110000 ;Motor speed controls enable
             
+            MOVB    #START, CRNT_STATE
+            MOVB    #$FF  , PREV_STATE
             JSR     initAD          ;initialize ATD converter
-            
-            JSR     initLCD         ;initialize LCD
-            JSR     clrLCD          ;clear LCD & home the cursor
-            
-            LDX     #msg1           ;display msg
-            JSR     putsLCD       
-            
-            LDAA    #$C0            ;move cursor to second row
-            JSR     cmd2LCD
-            
-            LDX     #msg2           ;display msg2
-            JSR     putsLCD       
-            
             JSR     ENABLE_TOF      ;Initialize TOF
+            MOVB    
             
 *****************************************************************
 *           Main Loop                                           *
 *****************************************************************            
            
 MAIN        JSR     UPDT_DISPL      ;Update display
-            LDAA    CRNT_STATE      ;Get current state
+            JSR     LINESENSE       ;Get linesensor output
+            
+            BRSET  PORTAD0,mPORTAD0_PTAD3,  NO_REV_BMP     ;If reverse bmp is on, stop. Else go to NO_REV_BMP            
+            MOVB   #ALL_STP, CRNT_STATE                    ;Set state to all stop
+            
+            
+NO_REV_BMP  LDAA    CRNT_STATE      ;Get current state
             JSR     DISPATCHER      ;run the dispatcher
             BRA     MAIN            ;loop
-            
-             
-;Data section
-msg1        dc.b  "battery volt ",0
-msg2        dc.b  "State ",0
-tab         dc.b  "START  ",0
-            dc.b  "STOP   ",0
-            dc.b  "FLINE  ",0
-            dc.b  "DET_T  ",0
-        
-         
+                    
        
 ;Subroutines Section   
 
@@ -114,23 +103,49 @@ DISPATCHER   CMPA   #START
              JSR    START_ST
              BRA    DISP_EXIT
              
-NOT_START    CMPA   #FLINE
-             BNE    NOT_FLINE
-             JSR    FLINE_ST
+NOT_START    CMPA   #FWD
+             BNE    NOT_FWD
+             JSR    FWD_ST
              BRA    DISP_EXIT
              
-NOT_FLINE    CMPA   #DETECT_T
-             BNE    NOT_DET_T
+NOT_FWD      CMPA   #LEFT_TRN
+             BNE    NOT_LEFT_TRN
+             JSR    LEFT_TRN_ST
+             BRA    DISP_EXIT
+
+NOT_LEFT_TRN CMPA   #RIGHT_TRN
+             BNE    NOT_R_TRN
+             JSR    RIGHT_TRN_ST
+             BRA    DISP_EXIT
+
+NOT_R_TRN    CMPA   #TRN_180
+             BNE    NOT_TRN_180
+             JSR    TRN_180_ST
+             BRA    DISP_EXIT
+
+NOT_TRN_180  CMPA   #DETECT_T
+             BNE    NOT_DETECT_T
              JSR    DETECT_T_ST
              BRA    DISP_EXIT
              
-NOT_DET_T    CMPA   #STOP
-             BNE    NOT_STOP
-             JSR    STOP_ST
+NOT_DETECT_T CMPA   #LOST
+             BNE    NOT_LOST
+             JSR    LOST_ST
              BRA    DISP_EXIT
-                     
+
+NOT_LOST     CMPA   #ALL_STP
+             BNE    NOT_ALL_STP
+             JSR    ALL_STP_ST
+             BRA    DISP_EXIT        
+;Stop code for testing
+;NOT_FWD      CMPA   #DETECT_T
+;             BNE    NOT_LOST
+;             JSR    DETECT_T_ST
+;             BRA    DISP_EXIT
              
-NOT_STOP     SWI                      ;If it is none of the states: there is an error.
+
+             
+NOT_ALL_STP SWI                      ;If it is none of the states: there is an error.
 DISP_EXIT    RTS
 ********************************************************************
 *States                                                            *
@@ -139,17 +154,18 @@ DISP_EXIT    RTS
 ********************************************************************
 ;Start State. Waits for front bumper to be bumped before moving forwards.
 
-START_ST    BRCLR  PORTAD0, mPORTAD0_PTAD2, NO_FLINE        ;If front bmp is off: remain in start state
-            
+START_ST    BRSET  PORTAD0, mPORTAD0_PTAD2, NO_FWD          ;If front bmp is off: remain in start state
+                                                           
             LDAB   LINESENSOR_OUTPUT + 1                    ;Load the thresholded linesensor output
             ANDB   #$0F                                     ;Isolate lower 4 bits (ABCD)
             CMPB   #STRAIGHT                                ;Compare to straight state
-            BNE    NO_FLINE                                 ;remain in start state if not in straight state.
-                                                                
-            MOVB   #FLINE,CRNT_STATE                         ;Set state to FLINE
+            BNE    NO_FWD                                   ;remain in start state if not in straight state.
+            
+            MOVB   CRNT_STATE, PREV_STATE                   ;Set state to FWD                                  
+            MOVB   #FWD,CRNT_STATE                         
             BRA    START_EXIT
             
-NO_FLINE    NOP                                      ;Else
+NO_FWD      NOP                                      ;Else
 START_EXIT  RTS
 
 
@@ -160,411 +176,211 @@ START_EXIT  RTS
 ;Line is on the left: E/F = 0: turn left
 ;Line is on the right: E/f = 1: turn right
 
-FLINE           LDD    LINESENSOR_OUTPUT
-                BRSET  PORTAD0, mPORTAD0_PTAD2, FL_DETECT_INT    ;If front bmp is off: goto checking for intersections. Else activate stop state.
+FWD_ST          LDAA   CRNT_STATE
+                CMPA   PREV_STATE
 
-FL_FRONT_BMP    MOVB   #STOP, CRNT_STATE                         ;Bumper activated state transition
-                JSR    MC_STOP 
-                BRA    FLINE_EXIT
+                BEQ    FWD_SKIP                                   ;Skips init if previous state was the same state            
+                JSR    INIT_FWD                
+            
+FWD_SKIP        MOVB   CRNT_STATE, PREV_STATE                    ;Set previous state as this state
+                
+                BRSET  PORTAD0, mPORTAD0_PTAD2, FWD_DETECT_INT    ;If front bmp is off: goto checking for intersections. Else activate stop state.
 
-FL_DETECT_INT   ANDB   #$0F                                      ;Checking for intersections
+                
+FWD_FRONT_BMP   MOVB   #TRN_180, CRNT_STATE                         ;Bumper activated state transition               
+                BRA    FWD_EXIT
+
+FWD_DETECT_INT  LDD    LINESENSOR_OUTPUT
+                ANDB   #$0F                                       ;Checking for intersections
                 CMPB   #TJUNCTION
-                BEQ    FL_DETECTED
+                BEQ    FWD_DETECTED
                 CMPB   #TLEFT
-                BEQ    FL_DETECTED
+                BEQ    FWD_DETECTED
                 CMPB   #TRIGHT
-                BEQ    FL_DETECTED
-                BRA    FL_CONTROL
+                BEQ    FWD_DETECTED
+                BRA    FWD_CONTROL
                 
-FL_DETECTED     MOVB   #DETECT_T, CRNT_STATE                     ;Intersection detected state transition
-                JSR    MC_STOP
-                BRA    FLINE_EXIT                                
-                
+FWD_DETECTED    MOVB   #DETECT_T, CRNT_STATE                     ;Intersection detected state transition
+                BRA    FWD_EXIT                                
+
+; No intersection, we must be following line still.                
 ; Using Bang-bang control for line-following
-FL_CONTROL      LDAB   LINESENSOR_OUTPUT+1
+FWD_CONTROL     LDAB   LINESENSOR_OUTPUT+1
+                
+                BITB   #SENSB            ;Check if there is line Far Left
+                BNE    FWD_LINE_LEFT
+                
+                BITB   #SENSD            ;Check if there is line far right
+                BNE    FWD_LINE_RIGHT
+                
+                BITB   #%00100000        ;Check if in deadzone
+                BEQ    FWD_LINE_CNTR     ;Just go forwards           
+                                
                    
                 BITB   #%00010000        ;Check E/F bit for high vs low
-                BNE    FL_LINE_RIGHT      ;If it's 0, line is on our left.
+                BNE    FWD_LINE_RIGHT    
             
-FL_LINE_LEFT    JSR    MC_SLIGHT_LEFT
-                BRA    FLINE_EXIT
+FWD_LINE_LEFT   JSR    MTR_STEER_L
+                BRA    FWD_EXIT
 
-FL_LINE_RIGHT   JSR    MC_SLIGHT_RIGHT
-                BRA    FLINE_EXIT          
+FWD_LINE_RIGHT  JSR    MTR_STEER_R
+                BRA    FWD_EXIT          
 
+FWD_LINE_CNTR   JSR    MTR_FWD
+                
 
-FLINE_EXIT      RTS
-            
-; Using proportional Control 
+FWD_EXIT        RTS
+
                  
 ********************************************************************
+; Intersection detected
+DETECT_T_ST     LDAA   CRNT_STATE
+                CMPA   PREV_STATE
+                BEQ    DTECT_T_SKIP           ;Skip initialization if in the same state as previous
+                
+                JSR    INIT_DETECT_T               
+                
 
+DTECT_T_SKIP    MOVB   CRNT_STATE, PREV_STATE  ;Set previous state as current state before any transitions
+                LDAA   LINESENSOR_OUTPUT + 1   ;Get sensor output to find which intersection we have
+                         
+                                                 
+                ANDA   #$0F                    ;Checking for intersections
+                CMPA   #TJUNCTION
+                BEQ    DTECT_T
+                CMPA   #TLEFT
+                BEQ    DTECT_TL
+                CMPA   #TRIGHT
+                BEQ    DTECT_TR
+                BRA    DTECT_ERROR
 
+;Always taking right-most path                
+DTECT_T         NOP
+DTECT_TR        MOVB   #RIGHT_TRN, CRNT_STATE
+                BRA    DTECT_T_EXIT
+                
+DTECT_TL        MOVB   #FWD,CRNT_STATE
+                BRA    DTECT_T_EXIT       
 
+DTECT_ERROR     MOVB   #ALL_STP, CRNT_STATE          
+
+DTECT_T_EXIT   RTS  
+                
 ********************************************************************
 ;All stop state
 ;Stop everything until front bumper is pushed.
-STOP_ST       BRSET  PORTAD0, mPORTAD0_PTAD2, NO_START       ;If front bmp is off; remain in all stop
-              BCLR   PTT,%00110000                           ;Init the START state (motors off)
-              MOVB   #START, CRNT_STATE                      ;Set state to START
-              BRA    ALL_STP_EXIT
-
-NO_START      NOP
-ALL_STP_EXIT  RTS
-
-
-;Intersection detected state
-DETECT_T_ST
-
-
-
-********************************************************************
-*Motor Controls                                                    *
-******************************************************************** 
-
-
-********************************************************************
-;Drive forewards
-INIT_FWD              BCLR  PORTA, %00000011              ;Set forwards direction for both motors
-                      BSET  PTT,%00110000                 ;Turn on drive motors
-                      LDAA  TOF_COUNTER                   ;Create the FWD time flag
-                      ADDA  #FWD_INT
-                      STAA  T_FWD
-                      RTS
-
-********************************************************************
-;Drie backwrds
-INIT_REV              BSET  PORTA, %00000011              ;Set reverse direction for both motors
-                      BSET  PTT,%00110000                 ;Turn on drive motors
-                      LDAA  TOF_COUNTER                   ;Create the REV time flag
-                      ADDA  #REV_INT
-                      STAA  T_REV
-                      RTS
-                      
-********************************************************************
-;Stop
-INIT_ALL_STP          BCLR  PTT,%00110000                 ;Turn off motors
-                      RTS
-                      
-********************************************************************
-;Forwards turn
-INIT_FWD_TRN          BSET  PORTA, %00000010              ;Set reverse direction for right motor (starboard)
-                      LDAA  TOF_COUNTER                   ;Create the FWD_TRN time flag
-                      ADDA  #FWD_TRN_INT
-                      STAA  T_FWD_TRN
-                      RTS
-                      
-********************************************************************    
-;Reverse turn                  
-INIT_REV_TRN          BCLR  PORTA, %00000010              ;Set forwards direction for right motor (starboard)
-                      LDAA  TOF_COUNTER                   ;Create the FWD time flag
-                      ADDA  #REV_TRN_INT
-                      STAA  T_REV_TRN
-                      RTS
-                      
-********************************************************************
-*LCD Functions                                                     *
-******************************************************************** 
-            
-********************************************************************
-; Initialize the LCD                                               
-; Nukes ACCA
-
-initLCD                BSET DDRB, #%11111111              ; Configure all 8 bits as output
-                       BSET DDRJ, #%11000000              ; Configure pin 7 & 4 as outputs
-                         
-                       LDY #2000                          ;                                   
-                       JSR  del_50us                      ; wait 0.1s for LCD boot
-                       
-                       BCLR LCD_CNTR,LCD_RS               ; Select instruction register for LCD
-                       LDAA #$38                          ; Activate 8 bit mode. Set 2 line display.
-                       JSR  dataMov                       ; Send to LCD
-                       LDAA #$0C                          ; Set display on w/ no cursor and no blinking
-                       JSR  dataMov                       ; Send to LCD
-                       LDAA #$06                          ; Set to move cursor L to R 
-                       JSR  dataMov                       ; Send to LCD
-                       RTS
-                       
-********************************************************************
-; Clears entire display of LCD
-
-clrLCD                 LDAA #$01                          ; clear cursor & return to home command
-                       JSR  cmd2LCD                       
-                       LDY  #40                           ; Delay 2ms for command to complete.
-                       JSR del_50us
-                       RTS                           
-
-********************************************************************
-; Generate delays with increments of 50us. Y * 50us of delay       
-; Uses register X & Y. Preserves X's value by using stack          
-;                                                                  
-; Timer math: ECLK = 24MHz = ~41.67nS/clk.                         
-;             50us / 41.67ns/clk = 1200 clks                       
-
-
-del_50us               PSHX                      ; 2 eclks
-; set X value for internal loop. 
-; Total external delay of (10 + 1190 eclks) * Y = 50us * Y
-eloop                  LDX #35                   ; 2 eclks
-; Total internal delay of 34 e clks. 35 x 34 eclks within = 1190 for iloop section.
-iloop                  PSHA                      ; Del 2 CLK
-                       PULA                      ; Del 3 CLK
-                       PSHA                      ; Del 2 CLK
-                       PULA                      ; Del 3 CLK
-                       PSHA                      ; Del 2 CLK
-                       PULA                      ; Del 3 CLK
-                       PSHA                      ; Del 2 CLK
-                       PULA                      ; Del 3 CLK
-                       PSHA                      ; Del 2 CLK
-                       PULA                      ; Del 3 CLK
-                       nop                       ; Del 1 CLK
-                       dbne x,iloop              ; 3 eclks 
-                       
-                       PSHA                      ; DEL 2 CLK
-                       PULA                      ; Del 3 CLK
-                       dbne y,eloop              ; 3 eclks
-; Reset value of X to its original value                        
-                       PULX                      ; 3 eclks
-                       RTS                       ; 5 eclks
-                       
-; Accounting for overhead: PSHX + PULX + RTS + LDY = 12 eclks ~ negligible 415ns.
-
-********************************************************************
-; Sends command to instruction register of LCD
-
-cmd2LCD                BCLR LCD_CNTR, LCD_RS              ; Select LCD instruction register
-                       JSR  dataMov                       ; Send data to LCD
-                       RTS
-********************************************************************
-; Display a string to the LCD, stopping at a null byte ($00)       
-; Assumes storage in regX                                          
-
-putsLCD                LDAA 1, X+                         ; Get a character from string stored in X
-                       BEQ  done                          ; exit if at null ($00)
-                       JSR  putcLCD                       ; print current character
-                       JSR  putsLCD                       ; repeat
-
-done                   RTS
-
-********************************************************************
-; Display a character to the LCD. Assumes usage of AccA            
-
-putcLCD                BSET LCD_CNTR, LCD_RS                 ; Select data register
-                       JSR dataMov                        ; Send data
-                       RTS 
-
-********************************************************************
-; General purpose function to send 8bit sequences to LCD           
-; Bits are sent from ACCA                                          
-;                                                                  
-; Nukes ACCA of its contents.                                      
-
-dataMov                BSET LCD_CNTR, LCD_E               ; Set enable high
-                       STAA LCD_DAT                       ; Send upper 8 bits of A to LCD
-                       BCLR LCD_CNTR, LCD_E              ; Set enable low to complete write
-                                                    
-                       LDY #1                             ; 50us delay for LCD to process data
-                       JSR del_50us
-                       RTS
-*****************************************************************
-*Update display                                                 *
-***************************************************************** 
-UPDT_DISPL             MOVB    #$90, ATDCTL5   ; Read ATD Converter. R-just, uns., sing. conv., mult., ch=0, start
-                       BRCLR   ATDSTAT0, $80, *          ;Wait for ATD status bit
-                       
-                       LDAA    ATDDR0L            ;Display battery voltage
-                       LDAB    #39                ;Convert from bit value to Voltage
-                       MUL
-                       ADDD    #600
-                       
-                       JSR     int2BCD            ;Convert to BCD 
-                       JSR     BCD2ASC            ;Convert to ASCII to be output on screen
-                       LDAA    #$8D               ;move LCD cursor to the 1st row, end of msg1
-                       JSR     cmd2LCD 
-                        
-                       LDAA    TEN_THOUS          ;Output Battery voltage value to LCD
-                       JSR     putcLCD 
-                       LDAA    THOUSANDS
-                       JSR     putcLCD
-                       LDAA    #'.'
-                       JSR     putcLCD
-                       LDAA    HUNDREDS
-                       JSR     putcLCD 
-                       LDAA    TENS
-                       JSR     putcLCD
-                       LDAA    UNITS
-                       JSR     putcLCD
-                       
-                       LDAA    #$C6               ;Move cursor to 2nd row, end of msg 2
-                       JSR     cmd2LCD
-                       
-                       LDAB    CRNT_STATE         ;Display current state
-                       LSLB                       ;Multiply B by 8, since each string is 8 bytes. 
-                       LSLB
-                       LSLB
-                       LDX     #tab               ;get index of first message
-                       ABX                        ;Add offset B to get corresponding message. (tab + CRNT_STATE)
-                       JSR     putsLCD
-                       
-                       RTS
-                       
-*****************************************************************
-*            Timer Subroutines                                  *
-*****************************************************************   
-                     
-ENABLE_TOF             LDAA    #%10000000
-                       STAA    TSCR1           ; Enable TCNT
-                       STAA    TFLG2           ; Clear TOF
-                       LDAA    #%10000100      ; Enable TOI and select prescale factor equal to 16
-                       STAA    TSCR2
-                       RTS
-*****************************************************************
-TOF_ISR                INC     TOF_COUNTER     ; Increment TOF counter
-                       LDAA    #%10000000      ; Clear flag
-                       STAA    TFLG2           ;  
-                       RTI
-                       
-*****************************************************************
-*            AD Converter                                       *
-*****************************************************************
-initAD                 MOVB #$C0,ATDCTL2                  ;ATDCTL2 power up AD, select fast flag clear
-                       JSR del_50us                       ;wait for 50 us
-                       MOVB #$00,ATDCTL3                  ;8 conversions in a sequence. Non-FIFO
-                       MOVB #$85,ATDCTL4                  ;res=8, conv-clks=2, prescal=12
-                       BSET ATDDIEN,$0C                   ;configure pins AN03,AN02 as digital inputs
-                       RTS
-
-
-*****************************************************************
-*Unit Conversions                                               *
-*****************************************************************                       
-
-; Convert from 16bit int to BCD upto ten thousanth digit via       
-; successive integer division.                                     
-; Routine taken from lab manual                                    
-; Empties BCD Buffer.                                              
-; Converts number in D to number in BCD buffer                     
-; Empties register X and D.                                                                                  
-int2BCD                XGDX                               ; Save number into X
-                       LDAA #$00                          ; Clear BCD_BUFFER
-                       STAA TEN_THOUS
-                       STAA THOUSANDS
-                       STAA HUNDREDS
-                       STAA TENS
-                       STAA UNITS
+ALL_STP_ST      MOVB   CRNT_STATE, PREV_STATE
+                JSR    MTR_STP
+                BRSET  PORTAD0, mPORTAD0_PTAD2, NO_START       ;If front bmp is off; remain in all stop
                 
-                       
-                       CPX  #0                            ;Check X for a zero input
-                       BEQ  CON_EXIT                      ;If so exit.
-                       
-                       XGDX                               ;Send number back to D as a dividend
-                       LDX  #10                           ;divide by 10
-                       IDIV                               ;Quotient in X, remainder in D
-                       STAB UNITS                         ;Store the remainder
-                       CPX  #0                            ;Check if quotient is 0
-                       BEQ  CON_EXIT                      ;if so exit
-                       
-                       XGDX                               ;Move quotient into D.
-                       LDX  #10                           ;Divide by 10
-                       IDIV                               ;Quotient in X, Remainder in D
-                       STAB TENS                          ;Store the remainder
-                       CPX  #0                            ;Check if quotient is 0
-                       BEQ  CON_EXIT                      ;if so exit
-                       
-                       XGDX                               ;Move quotient into D.
-                       LDX  #10                           ;Divide by 10
-                       IDIV                               ;Quotient in X, Remainder in D
-                       STAB HUNDREDS                      ;Store the remainder
-                       CPX  #0                            ;Check if quotient is 0
-                       BEQ  CON_EXIT                      ;if so exit
-                       
-                       XGDX                               ;Move quotient into D.
-                       LDX  #10                           ;Divide by 10
-                       IDIV                               ;Quotient in X, Remainder in D
-                       STAB THOUSANDS                     ;Store the remainder
-                       CPX  #0                            ;Check if quotient is 0
-                       BEQ  CON_EXIT                      ;if so exit
-                       
-                       XGDX                               ;Move quotient into D.
-                       LDX  #10                           ;Divide by 10
-                       IDIV                               ;Quotient in X, Remainder in D
-                       STAB TEN_THOUS                 ;Store the remainder                     
-                      
-CON_EXIT               RTS
+                MOVB   #START, CRNT_STATE
+                BRA    ALL_STP_EXIT
 
-**************************************************************************
-; Convert BCD to ascii code. Checks for blank characters, then     
-; converts numbers to ascii by adding $30. Possible because numbers 
-; in BCD are garunteed to be 0-9. Result stored in BCD buffer      
-BCD2ASC                LDAA #0                            ;Initialize blanking flag
-                       STAA NO_BLANK
-                       
-C_TTHOU                LDAA TEN_THOUS                     ;Get the ten thousands digit
-                       ORAA NO_BLANK                      ;Or operation with A to generate flags (i.e, number is smaller than 100000)
-                       BNE  NOT_BLANK1                    ;Branch if it was not 0
-                       
-ISBLANK1               LDAA #' '                          ;It's a blank 
-                       STAA TEN_THOUS                     ;Store a blank ASCII character into TEN_THOUS
-                       BRA  C_THOU                        ;Check thousanths next.
+NO_START        NOP               
+ALL_STP_EXIT    RTS
 
-NOT_BLANK1             LDAA TEN_THOUS                     ;Get ten thousanth's digit
-                       ORAA #$30                          ;Convert to ACSII
-                       STAA TEN_THOUS                     ;Store result
-                       LDAA #$1                           ;Set flag that we've had non-blank digit
-                       STAA NO_BLANK
- 
-                       
-C_THOU                 LDAA THOUSANDS                     ;Get the ten thousands digit
-                       ORAA NO_BLANK                      ;Or operation with A to generate flags (i.e, number is smaller than 100000)
-                       BNE  NOT_BLANK2                    ;Branch if it was not 0
-                       
-ISBLANK2               LDAA #' '                          ;It's a blank 
-                       STAA THOUSANDS                     ;Store a blank ASCII character into THOUSANDS
-                       BRA  C_HUNS                        ;Check thousanths next.
+********************************************************************
+; 90 turn Right
+RIGHT_TRN_ST    LDAA   CRNT_STATE                        ;Skip init for consecutive calls
+                CMPA   PREV_STATE                
+                BEQ    RIGHT_TRN_SKIP
+                
+                JSR    INIT_RIGHT_TRN                    ;Init turning & setup timer flag.
+                
+RIGHT_TRN_SKIP  LDAA   TOF_COUNTER                       ;Check if we're done turning
+                SUBA   T_RIGHT_TRN                       ;Subtract interval
+                BMI    R_NOT_DONE                        ;Branch if negative
+                MOVB   #FWD, CRNT_STATE                                        
 
-NOT_BLANK2             LDAA THOUSANDS                     ;Get ten thousanth's digit
-                       ORAA #$30                          ;Convert to ACSII
-                       STAA THOUSANDS                     ;Store result
-                       LDAA #$1                           ;Set flag that we've had non-blank digit
-                       STAA NO_BLANK
+R_NOT_DONE
+RIGHT_TRN_EXIT  RTS
 
-C_HUNS                 LDAA HUNDREDS                      ;Get the hundreds digit
-                       ORAA NO_BLANK                      ;Or operation with A to generate flags (i.e, number is smaller than 100)
-                       BNE  NOT_BLANK3                    ;Branch if it was not 0
-                       
-ISBLANK3               LDAA #' '                          ;It's a blank 
-                       STAA HUNDREDS                      ;Store a blank ASCII character into HUNDREDS
-                       BRA  C_TENS                        ;Check tens next.
+********************************************************************
 
-NOT_BLANK3             LDAA HUNDREDS                      ;Get hundreths digit
-                       ORAA #$30                          ;Convert to ACSII
-                       STAA HUNDREDS                      ;Store result
-                       LDAA #$1                           ;Set flag that we've had non-blank digit
-                       STAA NO_BLANK
-                 
-C_TENS                 LDAA TENS                          ;Get the Tens digit
-                       ORAA NO_BLANK                      ;Or operation with A to generate flags (i.e, number is smaller than 10)
-                       BNE  NOT_BLANK4                    ;Branch if it was not 0
-                       
-ISBLANK4               LDAA #' '                          ;It's a blank 
-                       STAA TENS                          ;Store a blank ASCII character into TENS
-                       BRA  C_UNITS                       ;Check ones next.
+; 90 turn Left
+LEFT_TRN_ST     LDAA   CRNT_STATE                        ;Skip init for consecutive calls
+                CMPA   PREV_STATE                
+                BEQ    LEFT_TRN_SKIP
+                
+                JSR    INIT_LEFT_TRN                    ;Init turning & setup timer flag.
+                
+LEFT_TRN_SKIP   LDAA   TOF_COUNTER                      ;Check if we're done turning
+                SUBA   T_LEFT_TRN                       ;Subtract interval
+                BMI    L_NOT_DONE                       ;branch if negative (time is less than interval)
+                MOVB   #FWD, CRNT_STATE                                        
 
-NOT_BLANK4             LDAA TENS                          ;Get tens digit
-                       ORAA #$30                          ;Convert to ACSII
-                       STAA TENS                          ;Store result
+L_NOT_DONE
+LEFT_TRN_EXIT  RTS
+
+********************************************************************
+; 180 turn Right
+TRN_180_ST      LDAA   CRNT_STATE                        ;Skip init for consecutive calls
+                CMPA   PREV_STATE                
+                BEQ    TRN_180_SKIP
+                
+                JSR    INIT_TRN_180                    ;Init turning & setup timer flag.
+                
+TRN_180_SKIP    LDAA   TOF_COUNTER                       ;Check if we're done turning
+                SUBA   T_TRN_180                         ;Subtract interval
+                BMI    TRN_180_EXIT                      ;Branch if negative
+                MOVB   #FWD, CRNT_STATE                                        
+
+TRN_180_EXIT  RTS
+
+*********************************************************************
+*Init functions                                                    *
+******************************************************************** 
+; Initialize FWD
+INIT_FWD       JSR   MTR_FWD                    ;Start moving forwards.
+               MOVB  #FWD, PREV_STATE
+               RTS
+
+; Initialize Detected intersection state
+INIT_DETECT_T  JSR   MTR_STP                    ;Stop all motors.
+               MOVB  #DETECT_T, PREV_STATE
+               RTS
                
-C_UNITS                LDAA UNITS                         ;Get ones digits
-                       ORAA #$30                          ;Convert to ASCII (it will be atleast a '0')
-                       STAA UNITS                         ;Store result
+
+INIT_RIGHT_TRN JSR   MTR_PIVOT_R                ;Start turning right
+               LDAA  TOF_COUNTER                ;Setup timer flag
+               ADDA  #RIGHT_TRN_INT
+               STAA  T_RIGHT_TRN
+               MOVB  #RIGHT_TRN, PREV_STATE
+               RTS
+
+INIT_LEFT_TRN  JSR   MTR_PIVOT_L                ;Start turning right
+               LDAA  TOF_COUNTER                ;Setup timer flag
+               ADDA  #LEFT_TRN_INT
+               STAA  T_LEFT_TRN
+               MOVB  #LEFT_TRN, PREV_STATE
+               RTS
+
+INIT_TRN_180   JSR   MTR_PIVOT_R               ;Start turning
+               LDAA  TOF_COUNTER                ;Setup timer flag
+               ADDA  #TRN_180_INT
+               STAA  T_TRN_180
+               MOVB  #TRN_180, PREV_STATE                   
+               RTS
+      
                        
-                       RTS                                ;DONE                      
+ENABLE_TOF    LDAA  #%10000000
+              STAA  TSCR1                     ; Enable hardware timer counter
+              STAA  TFLG2                     ; Clear pending TOF flag
+              LDAA  #%10000100                ; Enable TOF interrupt, prescaler = 16
+              STAA  TSCR2
+              RTS
+                       
+
+TOF_ISR       INC   TOF_COUNTER               ; Increment 23Hz tick counter
+              LDAA  #%10000000                ; Clear TOF interrupt flag
+              STAA  TFLG2
+              RTI
+
+                    
                        
 ********************************************************************
 * Interrupt Vectors                                                *
 ********************************************************************
             ORG $FFFE
             FDB Entry               ; Reset Vector
-            
-            ORG $FFDE               ; Timer interrupt vector
-            DC.W TOF_ISR
+  

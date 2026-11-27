@@ -112,24 +112,6 @@
 ;        +---+---+--- not used
 
 
-; Liquid Crystal Display Equates
-;-------------------------------
-CLEAR_HOME      EQU     $01             ; Clear the display and home the cursor
-INTERFACE       EQU     $38             ; 8 bit interface, two line display
-CURSOR_OFF      EQU     $0C             ; Display on, cursor off
-SHIFT_OFF       EQU     $06             ; Address increments, no character shift
-LCD_SEC_LINE    EQU     64              ; Starting addr. of 2nd line of LCD (note decimal value!)
-
-; LCD Addresses
-LCD_CNTR        EQU     PTJ             ; LCD Control Register: E = PJ7, RS = PJ6
-LCD_DAT         EQU     PORTB           ; LCD Data Register: D7 = PB7, ... , D0 = PB0
-LCD_E           EQU     $80             ; LCD E-signal pin
-LCD_RS          EQU     $40             ; LCD RS-signal pin
-
-; Other codes
-NULL            EQU     00              ; The string 'null terminator'
-CR              EQU     $0D             ; 'Carriage Return' character
-SPACE           EQU     ' '             ; The 'space' character 
 
 *************************************************************************************
 * To be copied to main file                                                         *
@@ -189,13 +171,13 @@ TEMP            RMB     1               ; Temporary location
 ***********************************************************************************
 
 TOP_LINE        RMB     20              ; Top line of display
-                FCB     NULL            ;  terminated by null
+                FCB     #NULL           ;  terminated by null
 
 BOT_LINE        RMB     20              ; Bottom line of display
-                FCB     NULL            ;  terminated by null
+                FCB     #NULL           ;  terminated by null
 
 CLEAR_LINE      FCC     '                  '
-                FCB     NULL            ;  terminated by null
+                FCB     #NULL           ;  terminated by null
 
 
 
@@ -375,11 +357,14 @@ STATUS_EF        LDAA    SENSOR_LINE                ; A = current E/F reading
                  CBA                                ; Computes A - B (reading - lower)
                  BLS     EF_LO                      ; reading <= lower: clear bit
                  
-                 BRA     PASSTHROUGH                ; Inside the band: keep previous state
-
-EF_HI            BSET    LINE_STATUS, %00010000     ; Set bit E/F: we are left of line
+                 BSET    LINE_STATUS, %00100000     ; Inside the band: Set deadzone bit.
+                 BRA     PASSTHROUGH
+                                 
+EF_HI            BSET    LINE_STATUS, %00010000     ; Set bit E/F: we are left of line                     
+                 BCLR    LINE_STATUS, %00100000     ; Clear deadzone bit
                  BRA     PASSTHROUGH
 EF_LO            BCLR    LINE_STATUS, %00010000     ; Clear bit E/F : we are right of line
+                 BCLR    LINE_STATUS, %00100000     ; Clear deadzone bit
                  BRA     PASSTHROUGH
 
 PASSTHROUGH      LDAA    SENSOR_LINE
