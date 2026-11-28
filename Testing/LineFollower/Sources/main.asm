@@ -63,20 +63,21 @@ SENSC           EQU     $02             ;Sensor C mask
 SENSD           EQU     $01             ;Sensor D mask
 
 ;Sensor level threhsold
-BOW_THRESHOLD_H      EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
-BOW_THRESHOLD_L      EQU     $5C               ;Off a line:  1.8V = 92 = $5C
+BOW_THRESHOLD_H      EQU     $9F               ;Threshold in N. On a line: 3V = 153 = $99
+BOW_THRESHOLD_L      EQU     $5E               ;Off a line:  1.8V = 92 = $5C
 
-PORT_THRESHOLD_H     EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
-PORT_THRESHOLD_L     EQU     $5C
+PORT_THRESHOLD_H     EQU     $A3               ;Threshold in N. On a line: 3V = 153 = $99
+PORT_THRESHOLD_L     EQU     $70
 
-MID_THRESHOLD_H      EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
-MID_THRESHOLD_L      EQU     $5C
+MID_THRESHOLD_H      EQU     $A7               ;Threshold in N. On a line: 3V = 153 = $99
+MID_THRESHOLD_L      EQU     $6B
 
-STBD_THRESHOLD_H     EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
+
+STBD_THRESHOLD_H     EQU     $9C               ;Threshold in N. On a line: 3V = 153 = $99
 STBD_THRESHOLD_L     EQU     $5C
 
-LINE_MID_VALUE       EQU     $99               ;Threshold in N. On a line: 3V = 153 = $99
-LINE_DELTA           EQU     $5C
+LINE_MID_VALUE       EQU     $8A               ;Threshold in N. On a line: 3V = 153 = $99
+LINE_DELTA           EQU     $0
 
 ;-----------------------------------------------------------------
 ; Variable / Data Section (RAM)
@@ -122,6 +123,7 @@ _Startup:
             JSR     INIT_SENS
             JSR     INIT_MOTORS
             JSR     initAD
+            JSR     initLCD
             JSR     INIT_LCD_UI
 
             CLR     LINE_STATUS
@@ -138,8 +140,8 @@ _Startup:
            
 MAIN        JSR     UPDT_DISPL      ;Update display
             JSR     LINESENSE       ;Get linesensor output            
-            BRSET  PORTAD0,mPORTAD0_PTAD3,  NO_REV_BMP     ;If reverse bmp is on, stop. Else go to NO_REV_BMP            
-            MOVB   #ALL_STP, CRNT_STATE                    ;Set state to all stop                     
+            BRSET   PORTAD0,mPORTAD0_PTAD3,  NO_REV_BMP     ;If reverse bmp is on, stop. Else go to NO_REV_BMP            
+            MOVB    #ALL_STP, CRNT_STATE                    ;Set state to all stop                     
 NO_REV_BMP  LDAA    CRNT_STATE      ;Get current state
             JSR     DISPATCHER      ;run the dispatcher
             BRA     MAIN            ;loop
@@ -192,15 +194,20 @@ NOT_R_TRN    CMPA   #TRN_180
              JSR    TRN_180_ST
              BRA    DISP_EXIT
 
-NOT_TRN_180  CMPA   #DETECT_T
-             BNE    NOT_DETECT_T
-             JSR    DETECT_T_ST
-             BRA    DISP_EXIT
-             
-NOT_DETECT_T CMPA   #LOST
+NOT_TRN_180  CMPA   #LOST
              BNE    NOT_LOST
              JSR    LOST_ST
-             BRA    DISP_EXIT
+             BRA    DISP_EXIT 
+             
+;NOT_TRN_180  CMPA   #DETECT_T
+;             BNE    NOT_DETECT_T
+;             JSR    DETECT_T_ST
+;             BRA    DISP_EXIT
+             
+;NOT_DETECT_T CMPA   #LOST
+;             BNE    NOT_LOST
+;             JSR    LOST_ST
+;             BRA    DISP_EXIT
 
 NOT_LOST     CMPA   #ALL_STP
              BNE    NOT_ALL_STP
@@ -262,15 +269,19 @@ FWD_FRONT_BMP   MOVB   #TRN_180, CRNT_STATE                         ;Bumper acti
 FWD_DETECT_INT  LDD    LINESENSOR_OUTPUT
                 ANDB   #$0F                                       ;Checking for intersections
                 CMPB   #TJUNCTION
-                BEQ    FWD_DETECTED
+                BEQ    DTECT_T
                 CMPB   #TLEFT
-                BEQ    FWD_DETECTED
+                BEQ    DTECT_TL
                 CMPB   #TRIGHT
-                BEQ    FWD_DETECTED
+                BEQ    DTECT_TR
                 BRA    FWD_CONTROL
                 
-FWD_DETECTED    MOVB   #DETECT_T, CRNT_STATE                     ;Intersection detected state transition
-                BRA    FWD_EXIT                                
+DTECT_T         NOP
+DTECT_TR        MOVB   #RIGHT_TRN, CRNT_STATE
+                BRA    FWD_EXIT
+                
+DTECT_TL        MOVB   #FWD,CRNT_STATE
+                BRA    FWD_EXIT                                 
 
 ; No intersection, we must be following line still.                
 ; Using Bang-bang control for line-following
@@ -303,37 +314,37 @@ FWD_EXIT        RTS
                  
 ********************************************************************
 ; Intersection detected
-DETECT_T_ST     LDAA   CRNT_STATE
-                CMPA   PREV_STATE
-                BEQ    DTECT_T_SKIP           ;Skip initialization if in the same state as previous
-                
-                JSR    INIT_DETECT_T               
-                
-
-DTECT_T_SKIP    MOVB   CRNT_STATE, PREV_STATE  ;Set previous state as current state before any transitions
-                LDAA   LINESENSOR_OUTPUT + 1   ;Get sensor output to find which intersection we have
-                         
-                                                 
-                ANDA   #$0F                    ;Checking for intersections
-                CMPA   #TJUNCTION
-                BEQ    DTECT_T
-                CMPA   #TLEFT
-                BEQ    DTECT_TL
-                CMPA   #TRIGHT
-                BEQ    DTECT_TR
-                BRA    DTECT_ERROR
-
-;Always taking right-most path                
-DTECT_T         NOP
-DTECT_TR        MOVB   #RIGHT_TRN, CRNT_STATE
-                BRA    DTECT_T_EXIT
-                
-DTECT_TL        MOVB   #FWD,CRNT_STATE
-                BRA    DTECT_T_EXIT       
-
-DTECT_ERROR     MOVB   #ALL_STP, CRNT_STATE          
-
-DTECT_T_EXIT   RTS  
+;DETECT_T_ST     LDAA   CRNT_STATE
+;                CMPA   PREV_STATE
+;                BEQ    DTECT_T_SKIP           ;Skip initialization if in the same state as previous
+;                
+;                JSR    INIT_DETECT_T               
+;                
+;
+;DTECT_T_SKIP    MOVB   CRNT_STATE, PREV_STATE  ;Set previous state as current state before any transitions
+;                LDAA   LINESENSOR_OUTPUT + 1   ;Get sensor output to find which intersection we have
+;                         
+;                                                 
+;                ANDA   #$07                    ;Checking for intersections
+;                CMPA   #TJUNCTION
+;                BEQ    DTECT_T
+;                CMPA   #TLEFT
+;                BEQ    DTECT_TL
+;                CMPA   #TRIGHT
+;                BEQ    DTECT_TR
+;                BRA    DTECT_T_EXIT
+;
+;;Always taking right-most path                
+;DTECT_T         NOP
+;DTECT_TR        MOVB   #RIGHT_TRN, CRNT_STATE
+;                BRA    DTECT_T_EXIT
+;                
+;DTECT_TL        MOVB   #FWD,CRNT_STATE
+;                BRA    DTECT_T_EXIT       
+;
+;          
+;
+;DTECT_T_EXIT   RTS  
                 
 ********************************************************************
 ;All stop state

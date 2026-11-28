@@ -49,9 +49,9 @@ TRN_180         EQU     5
 DETECT_T        EQU     6
 LOST            EQU     7
 
-RIGHT_TRN_INT   EQU     23
+RIGHT_TRN_INT   EQU     20
 LEFT_TRN_INT    EQU     23 
-TRN_180_INT     EQU     46  
+TRN_180_INT     EQU     35  
 ;Line States                            Based on sensor readout
 STRAIGHT        EQU     $0A             ;On a straight line.Sensors A and C are activated.
 TJUNCTION       EQU     $07             ;Forwards T Junction. C, B, D sensors activated
@@ -133,6 +133,7 @@ _Startup:
 *           Main Loop                                           *
 *****************************************************************            
            
+            BRSET  PORTAD0, mPORTAD0_PTAD2, *              ;If front bmp is off: remain in start state            
 MAIN        LDAA    CRNT_STATE      ;Get current state
             JSR     DISPATCHER      ;run the dispatcher
             BRA     MAIN            ;loop        
